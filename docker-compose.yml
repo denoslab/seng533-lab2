@@ -1,0 +1,162 @@
+version: '3.4'
+
+networks:
+  k6:
+  grafana:
+
+volumes:
+  mongo_data: {}
+
+services:
+  influxdb:
+    image: influxdb:1.8
+    networks:
+      - k6
+      - grafana
+    ports:
+      - "8086:8086"
+    environment:
+      - INFLUXDB_DB=k6
+
+  grafana:
+    image: grafana/grafana:latest
+    networks:
+      - grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_BASIC_ENABLED=false
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+    volumes:
+      - ./dashboards:/var/lib/grafana/dashboards
+      - ./grafana-dashboard.yaml:/etc/grafana/provisioning/dashboards/dashboard.yaml
+      - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/datasource.yaml
+
+  k6:
+    image: loadimpact/k6:latest
+    networks:
+      - k6
+    ports:
+      - "6565:6565"
+    environment:
+      - K6_OUT=influxdb=http://influxdb:8086/k6
+    volumes:
+      - ./scripts:/scripts
+
+  # BOOKSTORE ###############################################
+
+  mongodb:
+    #container_name: bs_db
+    image: mongo:3.4.24-xenial
+    networks:
+      - k6
+    ports:
+      - 27717:27017
+    volumes:
+      - mongo_data:/data/db
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+  ################################################
+  entry:
+    hostname: entry
+    #container_name: bs_en
+    build: "./api-gateway"
+    image: seng533/bookstore_entry
+    networks:
+      - k6
+    restart: on-failure
+    ports:
+      - "80:8080"
+    depends_on:
+      - auth
+    environment:
+      - WorkerCount=1
+      - JWT_KEY=someKeyIsGoodAndSomeOfThemBNoGEo1ioD!
+      - JAEGER_SERVICE_NAME=gateway
+      - JAEGER_COLLECTOR_HOST="jaeger-collector"
+      - JAEGER_COLLECTOR_PORT=14268
+      - JAEGER_AGENT_HOST="jaeger-agent"
+      - JAEGER_AGENT_PORT=6831
+      - SAMPELLING_PROB=0
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 0.256G
+        reservations:
+          cpus: "0.5"
+          memory: 0.256G  
+  auth:
+    #container_name: bs_auth
+    build: "./auth-service"
+    image: seng533/bookstore_auth
+    networks:
+      - k6
+    restart: on-failure
+    ports:
+      - "3007:3007"
+    environment:
+      - WorkerCount=1
+      - MONGODB_URL=mongodb://mongodb:27017/bookstoreDB
+      - JWT_KEY=someKeyIsGoodAndSomeOfThemBNoGEo1ioD!
+      - PORT=3007
+      - JAEGER_SERVICE_NAME=auth
+      - JAEGER_COLLECTOR_HOST="jaeger-collector"
+      - JAEGER_COLLECTOR_PORT=14268
+      - JAEGER_AGENT_HOST="jaeger-agent"
+      - JAEGER_AGENT_PORT=6831
+      - SAMPELLING_PROB=0
+    depends_on:
+      - mongodb
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 0.256G
+        reservations:
+          cpus: "0.5"
+          memory: 0.256G
+  ################################################
+  books:
+    #container_name: bs_books
+    image: seng533/bookstore_books
+    networks:
+      - k6
+    build: "./book-service"
+    restart: on-failure
+    ports:
+      - "3009:3009"
+    environment:
+      - WorkerCount=1
+      - MONGODB_URL=mongodb://mongodb:27017/bookstoreDB
+      - PORT=3009
+      - JAEGER_SERVICE_NAME=books
+      - JAEGER_COLLECTOR_HOST="jaeger-collector"
+      - JAEGER_COLLECTOR_PORT=14268
+      - JAEGER_AGENT_HOST="jaeger-agent"
+      - JAEGER_AGENT_PORT=6831
+      - SAMPELLING_PROB=0
+    depends_on:
+      - mongodb
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 0.256G
+        reservations:
+          cpus: "0.5"
+          memory: 0.256G
+
+
